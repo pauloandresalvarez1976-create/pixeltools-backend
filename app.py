@@ -1,3 +1,4 @@
+# v2
 from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
 from PIL import Image, ImageDraw, ImageFont
@@ -38,10 +39,8 @@ def fondo_blanco():
             return jsonify({'error': 'No se recibió imagen'}), 400
         f = request.files['image']
         input_bytes = f.read()
-        # rembg quita el fondo → PNG con transparencia
         output_bytes = remove(input_bytes)
         img = Image.open(io.BytesIO(output_bytes)).convert('RGBA')
-        # fondo blanco
         fondo = Image.new('RGBA', img.size, (255, 255, 255, 255))
         fondo.paste(img, mask=img.split()[3])
         resultado = fondo.convert('RGB')
@@ -83,7 +82,7 @@ def convertir():
             buf = io.BytesIO()
             img.save(buf, format='JPEG', quality=92)
             buf.seek(0)
-            return send_file(buf, mimetype='image/jpeg', download_name=f'convertida.jpg')
+            return send_file(buf, mimetype='image/jpeg', download_name='convertida.jpg')
         else:
             buf = io.BytesIO()
             img.save(buf, format=fmt.upper())
@@ -101,17 +100,14 @@ def recortar():
         w = int(request.form.get('width', 1080))
         h = int(request.form.get('height', 1080))
         img = img.convert('RGB')
-        # crop centrado manteniendo proporción
         orig_w, orig_h = img.size
         target_ratio = w / h
         orig_ratio = orig_w / orig_h
         if orig_ratio > target_ratio:
-            # más ancho → recortar lados
             new_w = int(orig_h * target_ratio)
             left = (orig_w - new_w) // 2
             img = img.crop((left, 0, left + new_w, orig_h))
         else:
-            # más alto → recortar arriba/abajo
             new_h = int(orig_w / target_ratio)
             top = (orig_h - new_h) // 2
             img = img.crop((0, top, orig_w, top + new_h))
@@ -133,7 +129,6 @@ def portada():
         h = int(request.form.get('height', 720))
         texto = request.form.get('texto', '').strip()
         img = img.convert('RGB')
-        # resize con crop centrado
         orig_w, orig_h = img.size
         target_ratio = w / h
         orig_ratio = orig_w / orig_h
@@ -146,7 +141,6 @@ def portada():
             top = (orig_h - new_h) // 2
             img = img.crop((0, top, orig_w, top + new_h))
         img = img.resize((w, h), Image.LANCZOS)
-        # agregar texto si viene
         if texto:
             draw = ImageDraw.Draw(img)
             font_size = max(24, h // 18)
@@ -154,7 +148,6 @@ def portada():
                 font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', font_size)
             except:
                 font = ImageFont.load_default()
-            # sombra
             margin = 20
             draw.text((margin+2, h - font_size - margin + 2), texto, font=font, fill=(0,0,0,180))
             draw.text((margin, h - font_size - margin), texto, font=font, fill=(255,255,255,230))
@@ -178,7 +171,6 @@ def marca_de_agua():
         w, h = img.size
         overlay = Image.new('RGBA', img.size, (0,0,0,0))
         draw = ImageDraw.Draw(overlay)
-
         if tipo == 'texto':
             texto = request.form.get('texto', '').strip()
             if not texto:
@@ -194,10 +186,8 @@ def marca_de_agua():
             margin = 20
             x, y = _calcular_pos(posicion, w, h, tw, th, margin)
             alpha = int(255 * opacidad)
-            # sombra
             draw.text((x+2, y+2), texto, font=font, fill=(0,0,0,alpha//2))
             draw.text((x, y), texto, font=font, fill=(255,255,255,alpha))
-
         elif tipo == 'logo':
             if 'logo' not in request.files:
                 return jsonify({'error': 'Falta el logo'}), 400
@@ -207,12 +197,10 @@ def marca_de_agua():
             lw, lh = logo.size
             margin = 20
             x, y = _calcular_pos(posicion, w, h, lw, lh, margin)
-            # aplicar opacidad al logo
             r, g, b, a = logo.split()
             a = a.point(lambda p: int(p * opacidad))
             logo = Image.merge('RGBA', (r, g, b, a))
             overlay.paste(logo, (x, y), logo)
-
         resultado = Image.alpha_composite(img, overlay).convert('RGB')
         buf = io.BytesIO()
         resultado.save(buf, format='JPEG', quality=92)
