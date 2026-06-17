@@ -1,4 +1,4 @@
-# v2
+# v3
 from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
 from PIL import Image, ImageDraw, ImageFont
@@ -7,7 +7,7 @@ import io
 import os
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, origins="*", supports_credentials=False)
 
 MAX_SIZE = 20 * 1024 * 1024  # 20MB
 
