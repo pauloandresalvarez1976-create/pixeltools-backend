@@ -4,3 +4,6 @@ pillow
 gunicorn
 onnxruntime
 rembg[cpu]
+pikepdf
+pdf2image
+img2pdf

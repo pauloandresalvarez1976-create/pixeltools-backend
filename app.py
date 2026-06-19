@@ -1,15 +1,16 @@
-# v3
+# v4 — imagen + PDF
 from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
 from PIL import Image, ImageDraw, ImageFont
 from rembg import remove
-import io
-import os
+import io, os, zipfile
+import pikepdf
 
 app = Flask(__name__)
 CORS(app, origins="*", supports_credentials=False)
 
-MAX_SIZE = 20 * 1024 * 1024  # 20MB
+MAX_SIZE = 20 * 1024 * 1024   # 20MB imágenes
+MAX_PDF  = 50 * 1024 * 1024   # 50MB PDFs
 
 def get_image():
     if 'image' not in request.files:
@@ -31,7 +32,19 @@ def send_image(img, fmt='PNG', filename='resultado'):
     mime = 'image/jpeg' if save_fmt == 'JPEG' else f'image/{fmt.lower()}'
     return send_file(buf, mimetype=mime, download_name=f'{filename}.{fmt.lower()}')
 
-# ─── 1. FONDO BLANCO ─────────────────────────────────────────────────────────
+def get_pdf(field='pdf'):
+    if field not in request.files:
+        return None, jsonify({'error': f'No se recibió el PDF ({field})'}), 400
+    f = request.files[field]
+    data = f.read()
+    if len(data) > MAX_PDF:
+        return None, jsonify({'error': 'PDF demasiado grande (máx 50MB)'}), 400
+    return data, None, None
+
+# ═══════════════════════════════════════════════════════════════
+# IMAGEN ENDPOINTS (sin cambios)
+# ═══════════════════════════════════════════════════════════════
+
 @app.route('/api/fondo-blanco', methods=['POST'])
 def fondo_blanco():
     try:
@@ -51,7 +64,6 @@ def fondo_blanco():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# ─── 2. COMPRIMIR ─────────────────────────────────────────────────────────────
 @app.route('/api/comprimir', methods=['POST'])
 def comprimir():
     try:
@@ -67,7 +79,6 @@ def comprimir():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# ─── 3. CONVERTIR ─────────────────────────────────────────────────────────────
 @app.route('/api/convertir', methods=['POST'])
 def convertir():
     try:
@@ -91,7 +102,6 @@ def convertir():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# ─── 4. RECORTAR ──────────────────────────────────────────────────────────────
 @app.route('/api/recortar', methods=['POST'])
 def recortar():
     try:
@@ -119,7 +129,6 @@ def recortar():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# ─── 5. PORTADA ───────────────────────────────────────────────────────────────
 @app.route('/api/portada', methods=['POST'])
 def portada():
     try:
@@ -158,7 +167,6 @@ def portada():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# ─── 6. MARCA DE AGUA ─────────────────────────────────────────────────────────
 @app.route('/api/marca-de-agua', methods=['POST'])
 def marca_de_agua():
     try:
@@ -223,9 +231,213 @@ def _calcular_pos(posicion, w, h, ew, eh, margin):
     }
     return mapa.get(posicion, (margin, h - eh - margin))
 
+# ═══════════════════════════════════════════════════════════════
+# PDF ENDPOINTS
+# ═══════════════════════════════════════════════════════════════
+
+# ─── PDF 1. COMPRIMIR ─────────────────────────────────────────
+@app.route('/api/comprimir-pdf', methods=['POST'])
+def comprimir_pdf():
+    try:
+        data, err, code = get_pdf('pdf')
+        if err: return err, code
+        inp = pikepdf.open(io.BytesIO(data))
+        buf = io.BytesIO()
+        inp.save(buf, compress_streams=True, recompress_flate=True,
+                 object_stream_mode=pikepdf.ObjectStreamMode.generate)
+        buf.seek(0)
+        return send_file(buf, mimetype='application/pdf', download_name='comprimido.pdf')
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ─── PDF 2. UNIR ──────────────────────────────────────────────
+@app.route('/api/unir-pdf', methods=['POST'])
+def unir_pdf():
+    try:
+        files = request.files.getlist('pdfs')
+        if len(files) < 2:
+            return jsonify({'error': 'Se necesitan al menos 2 PDFs'}), 400
+        resultado = pikepdf.Pdf.new()
+        for f in files:
+            data = f.read()
+            if len(data) > MAX_PDF:
+                return jsonify({'error': f'Archivo {f.filename} supera 50MB'}), 400
+            pdf = pikepdf.open(io.BytesIO(data))
+            resultado.pages.extend(pdf.pages)
+        buf = io.BytesIO()
+        resultado.save(buf)
+        buf.seek(0)
+        return send_file(buf, mimetype='application/pdf', download_name='unidos.pdf')
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ─── PDF 3. DIVIDIR ───────────────────────────────────────────
+@app.route('/api/dividir-pdf', methods=['POST'])
+def dividir_pdf():
+    try:
+        data, err, code = get_pdf('pdf')
+        if err: return err, code
+        modo = request.form.get('modo', 'todas')
+        pdf = pikepdf.open(io.BytesIO(data))
+        total = len(pdf.pages)
+
+        if modo == 'rango':
+            paginas_str = request.form.get('paginas', '').strip()
+            indices = _parsear_paginas(paginas_str, total)
+            if not indices:
+                return jsonify({'error': 'Páginas inválidas'}), 400
+            nuevo = pikepdf.Pdf.new()
+            for i in indices:
+                nuevo.pages.append(pdf.pages[i])
+            buf = io.BytesIO()
+            nuevo.save(buf)
+            buf.seek(0)
+            return send_file(buf, mimetype='application/pdf', download_name='paginas.pdf')
+        else:
+            # Una página por archivo → ZIP
+            zip_buf = io.BytesIO()
+            with zipfile.ZipFile(zip_buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for i, page in enumerate(pdf.pages):
+                    nuevo = pikepdf.Pdf.new()
+                    nuevo.pages.append(page)
+                    pb = io.BytesIO()
+                    nuevo.save(pb)
+                    zf.writestr(f'pagina-{i+1:03d}.pdf', pb.getvalue())
+            zip_buf.seek(0)
+            return send_file(zip_buf, mimetype='application/zip', download_name='paginas.zip')
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+def _parsear_paginas(s, total):
+    indices = set()
+    for parte in s.split(','):
+        parte = parte.strip()
+        if '-' in parte:
+            a, b = parte.split('-', 1)
+            try:
+                a, b = int(a.strip()), int(b.strip())
+                for n in range(a, b+1):
+                    if 1 <= n <= total:
+                        indices.add(n-1)
+            except: pass
+        else:
+            try:
+                n = int(parte)
+                if 1 <= n <= total:
+                    indices.add(n-1)
+            except: pass
+    return sorted(indices)
+
+# ─── PDF 4. PDF A JPG ─────────────────────────────────────────
+@app.route('/api/pdf-a-jpg', methods=['POST'])
+def pdf_a_jpg():
+    try:
+        from pdf2image import convert_from_bytes
+        data, err, code = get_pdf('pdf')
+        if err: return err, code
+        imagenes = convert_from_bytes(data, dpi=150)
+        if len(imagenes) == 1:
+            buf = io.BytesIO()
+            imagenes[0].save(buf, format='JPEG', quality=90)
+            buf.seek(0)
+            return send_file(buf, mimetype='image/jpeg', download_name='pagina-1.jpg')
+        zip_buf = io.BytesIO()
+        with zipfile.ZipFile(zip_buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for i, img in enumerate(imagenes):
+                pb = io.BytesIO()
+                img.save(pb, format='JPEG', quality=90)
+                zf.writestr(f'pagina-{i+1:03d}.jpg', pb.getvalue())
+        zip_buf.seek(0)
+        return send_file(zip_buf, mimetype='application/zip', download_name='paginas.zip')
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ─── PDF 5. JPG A PDF ─────────────────────────────────────────
+@app.route('/api/jpg-a-pdf', methods=['POST'])
+def jpg_a_pdf():
+    try:
+        files = request.files.getlist('imagenes')
+        if not files:
+            return jsonify({'error': 'No se recibieron imágenes'}), 400
+        imagenes = []
+        for f in files:
+            img = Image.open(f.stream).convert('RGB')
+            imagenes.append(img)
+        buf = io.BytesIO()
+        if len(imagenes) == 1:
+            imagenes[0].save(buf, format='PDF')
+        else:
+            imagenes[0].save(buf, format='PDF', save_all=True, append_images=imagenes[1:])
+        buf.seek(0)
+        return send_file(buf, mimetype='application/pdf', download_name='imagenes.pdf')
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ─── PDF 6. ROTAR ─────────────────────────────────────────────
+@app.route('/api/rotar-pdf', methods=['POST'])
+def rotar_pdf():
+    try:
+        data, err, code = get_pdf('pdf')
+        if err: return err, code
+        grado = int(request.form.get('grado', 90))
+        if grado not in [90, 180, 270]:
+            return jsonify({'error': 'Grado inválido'}), 400
+        pdf = pikepdf.open(io.BytesIO(data))
+        for page in pdf.pages:
+            page.rotate(grado, relative=True)
+        buf = io.BytesIO()
+        pdf.save(buf)
+        buf.seek(0)
+        return send_file(buf, mimetype='application/pdf', download_name=f'rotado-{grado}.pdf')
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ─── PDF 7. PROTEGER ──────────────────────────────────────────
+@app.route('/api/proteger-pdf', methods=['POST'])
+def proteger_pdf():
+    try:
+        data, err, code = get_pdf('pdf')
+        if err: return err, code
+        password = request.form.get('password', '').strip()
+        if not password:
+            return jsonify({'error': 'Falta la contraseña'}), 400
+        pdf = pikepdf.open(io.BytesIO(data))
+        perms = pikepdf.Permissions(
+            print_lowres=False, print_highres=False,
+            modify_annotation=False, modify_assembly=False,
+            modify_form=False, modify_other=False,
+            extract=False
+        )
+        enc = pikepdf.Encryption(user=password, owner=password, allow=perms)
+        buf = io.BytesIO()
+        pdf.save(buf, encryption=enc)
+        buf.seek(0)
+        return send_file(buf, mimetype='application/pdf', download_name='protegido.pdf')
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ─── PDF 8. DESBLOQUEAR ───────────────────────────────────────
+@app.route('/api/desbloquear-pdf', methods=['POST'])
+def desbloquear_pdf():
+    try:
+        data, err, code = get_pdf('pdf')
+        if err: return err, code
+        password = request.form.get('password', '')
+        try:
+            pdf = pikepdf.open(io.BytesIO(data), password=password)
+        except pikepdf.PasswordError:
+            return jsonify({'error': 'Contraseña incorrecta'}), 403
+        buf = io.BytesIO()
+        pdf.save(buf)
+        buf.seek(0)
+        return send_file(buf, mimetype='application/pdf', download_name='desbloqueado.pdf')
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ═══════════════════════════════════════════════════════════════
 @app.route('/', methods=['GET'])
 def index():
-    return jsonify({'status': 'PixelTools API corriendo ✓'})
+    return jsonify({'status': 'PixelTools API v4 corriendo ✓'})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
