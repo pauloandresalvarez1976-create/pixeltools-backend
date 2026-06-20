@@ -12,13 +12,25 @@ CORS(app, origins="*", supports_credentials=False)
 MAX_SIZE = 20 * 1024 * 1024   # 20MB imágenes
 MAX_PDF  = 50 * 1024 * 1024   # 50MB PDFs
 
-# Instalar gifsicle si no está disponible
-try:
-    subprocess.run(['gifsicle', '--version'], capture_output=True, check=True)
-except (FileNotFoundError, subprocess.CalledProcessError):
-    subprocess.run(['apt-get', 'install', '-y', 'gifsicle'], capture_output=True)
+# Descargar binario de gifsicle si no está disponible
+import shutil, stat, urllib.request
 
-GIFSICLE = 'gifsicle'
+GIFSICLE = '/tmp/gifsicle'
+
+def _install_gifsicle():
+    if shutil.which('gifsicle'):
+        return shutil.which('gifsicle')
+    if os.path.exists(GIFSICLE) and os.access(GIFSICLE, os.X_OK):
+        return GIFSICLE
+    url = 'https://github.com/kohler/gifsicle/releases/download/v1.95/gifsicle-1.95-linux-x86_64'
+    try:
+        urllib.request.urlretrieve(url, GIFSICLE)
+        os.chmod(GIFSICLE, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP)
+        return GIFSICLE
+    except Exception:
+        return None
+
+GIFSICLE_BIN = _install_gifsicle()
 
 def get_image():
     if 'image' not in request.files:
@@ -467,7 +479,10 @@ def optimizar_gif():
             fin_path = fin.name
         fout_path = fin_path.replace('.gif', '_opt.gif')
 
-        cmd = [GIFSICLE, '--optimize=3', f'--colors={colors}', '--output', fout_path, fin_path]
+        if not GIFSICLE_BIN:
+            return jsonify({'error': 'gifsicle no disponible en el servidor'}), 500
+
+        cmd = [GIFSICLE_BIN, '--optimize=3', f'--colors={colors}', '--output', fout_path, fin_path]
         result = subprocess.run(cmd, capture_output=True, timeout=60)
 
         os.unlink(fin_path)
