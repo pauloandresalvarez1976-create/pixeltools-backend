@@ -12,25 +12,7 @@ CORS(app, origins="*", supports_credentials=False)
 MAX_SIZE = 20 * 1024 * 1024   # 20MB imágenes
 MAX_PDF  = 50 * 1024 * 1024   # 50MB PDFs
 
-# Descargar binario de gifsicle si no está disponible
-import shutil, stat, urllib.request
-
-GIFSICLE = '/tmp/gifsicle'
-
-def _install_gifsicle():
-    if shutil.which('gifsicle'):
-        return shutil.which('gifsicle')
-    if os.path.exists(GIFSICLE) and os.access(GIFSICLE, os.X_OK):
-        return GIFSICLE
-    url = 'https://github.com/kohler/gifsicle/releases/download/v1.95/gifsicle-1.95-linux-x86_64'
-    try:
-        urllib.request.urlretrieve(url, GIFSICLE)
-        os.chmod(GIFSICLE, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP)
-        return GIFSICLE
-    except Exception:
-        return None
-
-GIFSICLE_BIN = _install_gifsicle()
+GIFSICLE_BIN = 'gifsicle'
 
 def get_image():
     if 'image' not in request.files:
