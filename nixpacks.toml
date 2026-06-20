@@ -1,2 +1,5 @@
 [phases.setup]
-nixPkgs = ["poppler_utils", "gifsicle"]
+nixPkgs = ["poppler_utils"]
+
+[phases.install]
+cmds = ["apt-get install -y gifsicle || true"]
