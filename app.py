@@ -3,7 +3,7 @@ from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
 from PIL import Image, ImageDraw, ImageFont
 from rembg import remove
-import io, os, zipfile
+import io, os, zipfile, subprocess
 import pikepdf
 
 app = Flask(__name__)
@@ -11,6 +11,14 @@ CORS(app, origins="*", supports_credentials=False)
 
 MAX_SIZE = 20 * 1024 * 1024   # 20MB imágenes
 MAX_PDF  = 50 * 1024 * 1024   # 50MB PDFs
+
+# Instalar gifsicle si no está disponible
+try:
+    subprocess.run(['gifsicle', '--version'], capture_output=True, check=True)
+except (FileNotFoundError, subprocess.CalledProcessError):
+    subprocess.run(['apt-get', 'install', '-y', 'gifsicle'], capture_output=True)
+
+GIFSICLE = 'gifsicle'
 
 def get_image():
     if 'image' not in request.files:
@@ -442,7 +450,6 @@ def desbloquear_pdf():
 def optimizar_gif():
     try:
         import tempfile
-        from pygifsicle import optimize as gif_optimize
         if 'gif' not in request.files:
             return jsonify({'error': 'No se recibió ningún GIF'}), 400
         f = request.files['gif']
@@ -458,20 +465,25 @@ def optimizar_gif():
         with tempfile.NamedTemporaryFile(suffix='.gif', delete=False) as fin:
             fin.write(data)
             fin_path = fin.name
-
         fout_path = fin_path.replace('.gif', '_opt.gif')
 
-        gif_optimize(fin_path, fout_path, colors=colors)
+        cmd = [GIFSICLE, '--optimize=3', f'--colors={colors}', '--output', fout_path, fin_path]
+        result = subprocess.run(cmd, capture_output=True, timeout=60)
+
+        os.unlink(fin_path)
+
+        if result.returncode != 0 or not os.path.exists(fout_path):
+            return jsonify({'error': 'No se pudo optimizar el GIF: ' + result.stderr.decode()}), 500
 
         with open(fout_path, 'rb') as fo:
             out_data = fo.read()
-
-        os.unlink(fin_path)
         os.unlink(fout_path)
 
-        buf = io.BytesIO(out_data)
-        buf.seek(0)
-        return send_file(buf, mimetype='image/gif', download_name='optimizado.gif')
+        return send_file(io.BytesIO(out_data), mimetype='image/gif', download_name='optimizado.gif')
+    except subprocess.TimeoutExpired:
+        return jsonify({'error': 'El GIF tardó demasiado'}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
