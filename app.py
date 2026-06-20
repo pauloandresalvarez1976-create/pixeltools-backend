@@ -441,7 +441,6 @@ def desbloquear_pdf():
 @app.route('/api/optimizar-gif', methods=['POST'])
 def optimizar_gif():
     try:
-        import subprocess, tempfile
         if 'gif' not in request.files:
             return jsonify({'error': 'No se recibió ningún GIF'}), 400
         f = request.files['gif']
@@ -450,42 +449,37 @@ def optimizar_gif():
             return jsonify({'error': 'GIF demasiado grande (máx 20MB)'}), 400
 
         nivel = request.form.get('nivel', 'medio')
-        lossy_map = {'bajo': 40, 'medio': 80, 'alto': 140}
-        lossy = lossy_map.get(nivel, 80)
-        colors = int(request.form.get('colores', 256))
+        colors_map = {'bajo': 256, 'medio': 128, 'alto': 64}
+        colors = int(request.form.get('colores', colors_map.get(nivel, 128)))
         colors = max(8, min(256, colors))
 
-        with tempfile.NamedTemporaryFile(suffix='.gif', delete=False) as fin:
-            fin.write(data)
-            fin_path = fin.name
+        src = Image.open(io.BytesIO(data))
+        frames = []
+        durations = []
+        loop = src.info.get('loop', 0)
 
-        fout_path = fin_path.replace('.gif', '_opt.gif')
+        try:
+            while True:
+                frame = src.copy().convert('RGBA')
+                frame = frame.quantize(colors=colors, method=Image.Quantize.MEDIANCUT)
+                frames.append(frame)
+                durations.append(src.info.get('duration', 100))
+                src.seek(src.tell() + 1)
+        except EOFError:
+            pass
 
-        cmd = [
-            'gifsicle',
-            '--optimize=3',
-            f'--lossy={lossy}',
-            f'--colors={colors}',
-            '--output', fout_path,
-            fin_path
-        ]
-        result = subprocess.run(cmd, capture_output=True, timeout=60)
-
-        if result.returncode != 0 or not os.path.exists(fout_path):
-            os.unlink(fin_path)
-            return jsonify({'error': 'Error al optimizar el GIF'}), 500
-
-        with open(fout_path, 'rb') as fo:
-            out_data = fo.read()
-
-        os.unlink(fin_path)
-        os.unlink(fout_path)
-
-        buf = io.BytesIO(out_data)
+        buf = io.BytesIO()
+        frames[0].save(
+            buf,
+            format='GIF',
+            save_all=True,
+            append_images=frames[1:],
+            loop=loop,
+            duration=durations,
+            optimize=True
+        )
         buf.seek(0)
         return send_file(buf, mimetype='image/gif', download_name='optimizado.gif')
-    except subprocess.TimeoutExpired:
-        return jsonify({'error': 'El GIF tardó demasiado en procesarse'}), 500
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
