@@ -460,8 +460,11 @@ def optimizar_gif():
 
         try:
             while True:
-                frame = src.copy().convert('RGBA')
-                frame = frame.quantize(colors=colors, method=Image.Quantize.FASTOCTREE)
+                # Convertir a RGB (sin alpha) para usar MEDIANCUT que genera paletas más pequeñas
+                frame = src.copy().convert('RGB').convert('P',
+                    palette=Image.Palette.ADAPTIVE,
+                    colors=colors
+                )
                 frames.append(frame)
                 durations.append(src.info.get('duration', 100))
                 src.seek(src.tell() + 1)
