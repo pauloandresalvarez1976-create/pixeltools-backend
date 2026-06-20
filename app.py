@@ -1,4 +1,4 @@
-# v4 — imagen + PDF
+# v5 — imagen + PDF + GIF
 from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
 from PIL import Image, ImageDraw, ImageFont
@@ -435,9 +435,64 @@ def desbloquear_pdf():
         return jsonify({'error': str(e)}), 500
 
 # ═══════════════════════════════════════════════════════════════
+# GIF ENDPOINT
+# ═══════════════════════════════════════════════════════════════
+
+@app.route('/api/optimizar-gif', methods=['POST'])
+def optimizar_gif():
+    try:
+        import subprocess, tempfile
+        if 'gif' not in request.files:
+            return jsonify({'error': 'No se recibió ningún GIF'}), 400
+        f = request.files['gif']
+        data = f.read()
+        if len(data) > MAX_SIZE:
+            return jsonify({'error': 'GIF demasiado grande (máx 20MB)'}), 400
+
+        nivel = request.form.get('nivel', 'medio')
+        lossy_map = {'bajo': 40, 'medio': 80, 'alto': 140}
+        lossy = lossy_map.get(nivel, 80)
+        colors = int(request.form.get('colores', 256))
+        colors = max(8, min(256, colors))
+
+        with tempfile.NamedTemporaryFile(suffix='.gif', delete=False) as fin:
+            fin.write(data)
+            fin_path = fin.name
+
+        fout_path = fin_path.replace('.gif', '_opt.gif')
+
+        cmd = [
+            'gifsicle',
+            '--optimize=3',
+            f'--lossy={lossy}',
+            f'--colors={colors}',
+            '--output', fout_path,
+            fin_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, timeout=60)
+
+        if result.returncode != 0 or not os.path.exists(fout_path):
+            os.unlink(fin_path)
+            return jsonify({'error': 'Error al optimizar el GIF'}), 500
+
+        with open(fout_path, 'rb') as fo:
+            out_data = fo.read()
+
+        os.unlink(fin_path)
+        os.unlink(fout_path)
+
+        buf = io.BytesIO(out_data)
+        buf.seek(0)
+        return send_file(buf, mimetype='image/gif', download_name='optimizado.gif')
+    except subprocess.TimeoutExpired:
+        return jsonify({'error': 'El GIF tardó demasiado en procesarse'}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ═══════════════════════════════════════════════════════════════
 @app.route('/', methods=['GET'])
 def index():
-    return jsonify({'status': 'PixelTools API v4 corriendo ✓'})
+    return jsonify({'status': 'PixelTools API v5 corriendo ✓'})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
