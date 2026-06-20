@@ -441,6 +441,8 @@ def desbloquear_pdf():
 @app.route('/api/optimizar-gif', methods=['POST'])
 def optimizar_gif():
     try:
+        import tempfile
+        from pygifsicle import optimize as gif_optimize
         if 'gif' not in request.files:
             return jsonify({'error': 'No se recibió ningún GIF'}), 400
         f = request.files['gif']
@@ -453,34 +455,21 @@ def optimizar_gif():
         colors = int(request.form.get('colores', colors_map.get(nivel, 128)))
         colors = max(8, min(256, colors))
 
-        src = Image.open(io.BytesIO(data))
-        frames = []
-        durations = []
-        loop = src.info.get('loop', 0)
+        with tempfile.NamedTemporaryFile(suffix='.gif', delete=False) as fin:
+            fin.write(data)
+            fin_path = fin.name
 
-        try:
-            while True:
-                # Convertir a RGB (sin alpha) para usar MEDIANCUT que genera paletas más pequeñas
-                frame = src.copy().convert('RGB').convert('P',
-                    palette=Image.Palette.ADAPTIVE,
-                    colors=colors
-                )
-                frames.append(frame)
-                durations.append(src.info.get('duration', 100))
-                src.seek(src.tell() + 1)
-        except EOFError:
-            pass
+        fout_path = fin_path.replace('.gif', '_opt.gif')
 
-        buf = io.BytesIO()
-        frames[0].save(
-            buf,
-            format='GIF',
-            save_all=True,
-            append_images=frames[1:],
-            loop=loop,
-            duration=durations,
-            optimize=True
-        )
+        gif_optimize(fin_path, fout_path, colors=colors)
+
+        with open(fout_path, 'rb') as fo:
+            out_data = fo.read()
+
+        os.unlink(fin_path)
+        os.unlink(fout_path)
+
+        buf = io.BytesIO(out_data)
         buf.seek(0)
         return send_file(buf, mimetype='image/gif', download_name='optimizado.gif')
     except Exception as e:
