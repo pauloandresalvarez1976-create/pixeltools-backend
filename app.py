@@ -461,7 +461,7 @@ def optimizar_gif():
         try:
             while True:
                 frame = src.copy().convert('RGBA')
-                frame = frame.quantize(colors=colors, method=Image.Quantize.MEDIANCUT)
+                frame = frame.quantize(colors=colors, method=Image.Quantize.FASTOCTREE)
                 frames.append(frame)
                 durations.append(src.info.get('duration', 100))
                 src.seek(src.tell() + 1)
