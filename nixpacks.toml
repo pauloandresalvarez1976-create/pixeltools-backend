@@ -1,8 +1,3 @@
 [phases.setup]
-nixPkgs = ["poppler_utils", "gcc", "gnumake", "autoconf", "automake"]
-
-[phases.build]
-cmds = [
-  "curl -L https://github.com/kohler/gifsicle/archive/refs/tags/v1.95.tar.gz | tar xz",
-  "cd gifsicle-1.95 && autoreconf -i && ./configure && make && make install"
-]
+nixPkgs = ["poppler_utils"]
+aptPkgs = ["...", "gifsicle"]
