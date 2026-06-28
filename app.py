@@ -1,9 +1,11 @@
-# v5 — imagen + PDF + GIF
+# v5 — imagen + PDF + GIF + contacto
 from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
 from PIL import Image, ImageDraw, ImageFont
 from rembg import remove
-import io, os, zipfile, subprocess
+import io, os, zipfile, subprocess, smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 import pikepdf
 
 app = Flask(__name__)
@@ -44,7 +46,85 @@ def get_pdf(field='pdf'):
     return data, None, None
 
 # ═══════════════════════════════════════════════════════════════
-# IMAGEN ENDPOINTS (sin cambios)
+# CONTACTO
+# ═══════════════════════════════════════════════════════════════
+
+@app.route('/api/contacto', methods=['POST'])
+def contacto():
+    try:
+        data    = request.get_json(force=True) or {}
+        nombre  = data.get('nombre', '').strip()
+        email   = data.get('email', '').strip()
+        asunto  = data.get('asunto', '').strip()
+        mensaje = data.get('mensaje', '').strip()
+
+        if not nombre or not asunto or not mensaje:
+            return jsonify({'error': 'Faltan campos obligatorios'}), 400
+
+        mail_user = os.environ.get('MAIL_USER')
+        mail_pass = os.environ.get('MAIL_PASS')
+        mail_to   = os.environ.get('MAIL_TO')
+
+        if not mail_user or not mail_pass or not mail_to:
+            return jsonify({'error': 'Servidor de correo no configurado'}), 500
+
+        asunto_map = {
+            'error':      '🐛 Reporte de error',
+            'sugerencia': '💡 Sugerencia de herramienta',
+            'consulta':   '❓ Consulta general',
+            'otro':       '💬 Otro',
+        }
+        asunto_label = asunto_map.get(asunto, asunto)
+
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = f'[PixelTools] {asunto_label} — {nombre}'
+        msg['From']    = mail_user
+        msg['To']      = mail_to
+        if email:
+            msg['Reply-To'] = email
+
+        texto_plano = (
+            f"Nuevo mensaje de contacto en PixelTools\n"
+            f"{'='*40}\n"
+            f"Nombre:  {nombre}\n"
+            f"Email:   {email or '(no proporcionado)'}\n"
+            f"Asunto:  {asunto_label}\n"
+            f"{'='*40}\n\n"
+            f"{mensaje}"
+        )
+
+        html = f"""
+        <div style="font-family:Inter,sans-serif;max-width:560px;margin:0 auto;background:#0f0f1a;color:#e8e8f0;border-radius:16px;overflow:hidden">
+          <div style="background:linear-gradient(135deg,#7c3aed,#e879f9);padding:24px 28px">
+            <span style="font-size:20px;font-weight:800;color:#fff">✦ PixelTools</span>
+            <p style="margin:6px 0 0;font-size:13px;color:rgba(255,255,255,0.7)">Nuevo mensaje de contacto</p>
+          </div>
+          <div style="padding:28px">
+            <table style="width:100%;border-collapse:collapse;font-size:14px">
+              <tr><td style="padding:8px 0;color:rgba(255,255,255,0.4);width:80px">Nombre</td><td style="padding:8px 0;color:#fff;font-weight:600">{nombre}</td></tr>
+              <tr><td style="padding:8px 0;color:rgba(255,255,255,0.4)">Email</td><td style="padding:8px 0;color:#c084fc">{email if email else '(no proporcionado)'}</td></tr>
+              <tr><td style="padding:8px 0;color:rgba(255,255,255,0.4)">Asunto</td><td style="padding:8px 0;color:#fff">{asunto_label}</td></tr>
+            </table>
+            <hr style="border:none;border-top:1px solid rgba(255,255,255,0.07);margin:20px 0">
+            <p style="font-size:14px;color:rgba(255,255,255,0.5);line-height:1.7;white-space:pre-wrap">{mensaje}</p>
+          </div>
+        </div>
+        """
+
+        msg.attach(MIMEText(texto_plano, 'plain'))
+        msg.attach(MIMEText(html, 'html'))
+
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+            server.login(mail_user, mail_pass)
+            server.sendmail(mail_user, mail_to, msg.as_string())
+
+        return jsonify({'ok': True})
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ═══════════════════════════════════════════════════════════════
+# IMAGEN ENDPOINTS
 # ═══════════════════════════════════════════════════════════════
 
 @app.route('/api/fondo-blanco', methods=['POST'])
@@ -237,7 +317,6 @@ def _calcular_pos(posicion, w, h, ew, eh, margin):
 # PDF ENDPOINTS
 # ═══════════════════════════════════════════════════════════════
 
-# ─── PDF 1. COMPRIMIR ─────────────────────────────────────────
 @app.route('/api/comprimir-pdf', methods=['POST'])
 def comprimir_pdf():
     try:
@@ -252,7 +331,6 @@ def comprimir_pdf():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# ─── PDF 2. UNIR ──────────────────────────────────────────────
 @app.route('/api/unir-pdf', methods=['POST'])
 def unir_pdf():
     try:
@@ -273,7 +351,6 @@ def unir_pdf():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# ─── PDF 3. DIVIDIR ───────────────────────────────────────────
 @app.route('/api/dividir-pdf', methods=['POST'])
 def dividir_pdf():
     try:
@@ -282,7 +359,6 @@ def dividir_pdf():
         modo = request.form.get('modo', 'todas')
         pdf = pikepdf.open(io.BytesIO(data))
         total = len(pdf.pages)
-
         if modo == 'rango':
             paginas_str = request.form.get('paginas', '').strip()
             indices = _parsear_paginas(paginas_str, total)
@@ -296,7 +372,6 @@ def dividir_pdf():
             buf.seek(0)
             return send_file(buf, mimetype='application/pdf', download_name='paginas.pdf')
         else:
-            # Una página por archivo → ZIP
             zip_buf = io.BytesIO()
             with zipfile.ZipFile(zip_buf, 'w', zipfile.ZIP_DEFLATED) as zf:
                 for i, page in enumerate(pdf.pages):
@@ -330,7 +405,6 @@ def _parsear_paginas(s, total):
             except: pass
     return sorted(indices)
 
-# ─── PDF 4. PDF A JPG ─────────────────────────────────────────
 @app.route('/api/pdf-a-jpg', methods=['POST'])
 def pdf_a_jpg():
     try:
@@ -354,7 +428,6 @@ def pdf_a_jpg():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# ─── PDF 5. JPG A PDF ─────────────────────────────────────────
 @app.route('/api/jpg-a-pdf', methods=['POST'])
 def jpg_a_pdf():
     try:
@@ -375,7 +448,6 @@ def jpg_a_pdf():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# ─── PDF 6. ROTAR ─────────────────────────────────────────────
 @app.route('/api/rotar-pdf', methods=['POST'])
 def rotar_pdf():
     try:
@@ -394,7 +466,6 @@ def rotar_pdf():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# ─── PDF 7. PROTEGER ──────────────────────────────────────────
 @app.route('/api/proteger-pdf', methods=['POST'])
 def proteger_pdf():
     try:
@@ -418,7 +489,6 @@ def proteger_pdf():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# ─── PDF 8. DESBLOQUEAR ───────────────────────────────────────
 @app.route('/api/desbloquear-pdf', methods=['POST'])
 def desbloquear_pdf():
     try:
@@ -450,37 +520,27 @@ def optimizar_gif():
         data = f.read()
         if len(data) > MAX_SIZE:
             return jsonify({'error': 'GIF demasiado grande (máx 20MB)'}), 400
-
         nivel = request.form.get('nivel', 'medio')
         colors_map = {'bajo': 256, 'medio': 128, 'alto': 64}
         colors = int(request.form.get('colores', colors_map.get(nivel, 128)))
         colors = max(8, min(256, colors))
-
         with tempfile.NamedTemporaryFile(suffix='.gif', delete=False) as fin:
             fin.write(data)
             fin_path = fin.name
         fout_path = fin_path.replace('.gif', '_opt.gif')
-
         if not GIFSICLE_BIN:
             return jsonify({'error': 'gifsicle no disponible en el servidor'}), 500
-
         cmd = [GIFSICLE_BIN, '--optimize=3', f'--colors={colors}', '--output', fout_path, fin_path]
         result = subprocess.run(cmd, capture_output=True, timeout=60)
-
         os.unlink(fin_path)
-
         if result.returncode != 0 or not os.path.exists(fout_path):
             return jsonify({'error': 'No se pudo optimizar el GIF: ' + result.stderr.decode()}), 500
-
         with open(fout_path, 'rb') as fo:
             out_data = fo.read()
         os.unlink(fout_path)
-
         return send_file(io.BytesIO(out_data), mimetype='image/gif', download_name='optimizado.gif')
     except subprocess.TimeoutExpired:
         return jsonify({'error': 'El GIF tardó demasiado'}), 500
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
