@@ -3,9 +3,7 @@ from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
 from PIL import Image, ImageDraw, ImageFont
 from rembg import remove
-import io, os, zipfile, subprocess, smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import io, os, zipfile, subprocess
 import pikepdf
 
 app = Flask(__name__)
@@ -52,6 +50,9 @@ def get_pdf(field='pdf'):
 @app.route('/api/contacto', methods=['POST'])
 def contacto():
     try:
+        from sendgrid import SendGridAPIClient
+        from sendgrid.helpers.mail import Mail
+
         data    = request.get_json(force=True) or {}
         nombre  = data.get('nombre', '').strip()
         email   = data.get('email', '').strip()
@@ -61,37 +62,17 @@ def contacto():
         if not nombre or not asunto or not mensaje:
             return jsonify({'error': 'Faltan campos obligatorios'}), 400
 
-        mail_user = os.environ.get('MAIL_USER')
-        mail_pass = os.environ.get('MAIL_PASS')
-        mail_to   = os.environ.get('MAIL_TO')
-
-        if not mail_user or not mail_pass or not mail_to:
+        sg_key = os.environ.get('SENDGRID_API_KEY')
+        if not sg_key:
             return jsonify({'error': 'Servidor de correo no configurado'}), 500
 
         asunto_map = {
-            'error':      '🐛 Reporte de error',
-            'sugerencia': '💡 Sugerencia de herramienta',
-            'consulta':   '❓ Consulta general',
-            'otro':       '💬 Otro',
+            'error':      'Reporte de error',
+            'sugerencia': 'Sugerencia de herramienta',
+            'consulta':   'Consulta general',
+            'otro':       'Otro',
         }
         asunto_label = asunto_map.get(asunto, asunto)
-
-        msg = MIMEMultipart('alternative')
-        msg['Subject'] = f'[PixelTools] {asunto_label} — {nombre}'
-        msg['From']    = mail_user
-        msg['To']      = mail_to
-        if email:
-            msg['Reply-To'] = email
-
-        texto_plano = (
-            f"Nuevo mensaje de contacto en PixelTools\n"
-            f"{'='*40}\n"
-            f"Nombre:  {nombre}\n"
-            f"Email:   {email or '(no proporcionado)'}\n"
-            f"Asunto:  {asunto_label}\n"
-            f"{'='*40}\n\n"
-            f"{mensaje}"
-        )
 
         html = f"""
         <div style="font-family:Inter,sans-serif;max-width:560px;margin:0 auto;background:#0f0f1a;color:#e8e8f0;border-radius:16px;overflow:hidden">
@@ -111,12 +92,15 @@ def contacto():
         </div>
         """
 
-        msg.attach(MIMEText(texto_plano, 'plain'))
-        msg.attach(MIMEText(html, 'html'))
+        message = Mail(
+            from_email='pixeltoolsar@gmail.com',
+            to_emails='pixeltoolsar@gmail.com',
+            subject=f'[PixelTools] {asunto_label} — {nombre}',
+            html_content=html
+        )
 
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-            server.login(mail_user, mail_pass)
-            server.sendmail(mail_user, mail_to, msg.as_string())
+        sg = SendGridAPIClient(sg_key)
+        sg.send(message)
 
         return jsonify({'ok': True})
 

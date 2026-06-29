@@ -8,3 +8,4 @@ pikepdf
 pdf2image
 img2pdf
 pygifsicle
+sendgrid
