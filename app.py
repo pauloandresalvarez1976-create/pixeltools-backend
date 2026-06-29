@@ -93,7 +93,7 @@ def contacto():
         """
 
         message = Mail(
-            from_email='pixeltoolsar@gmail.com',
+            from_email='contacto@pixeltoolsar.com',
             to_emails='pixeltoolsar@gmail.com',
             subject=f'[PixelTools] {asunto_label} — {nombre}',
             html_content=html
@@ -104,6 +104,129 @@ def contacto():
 
         return jsonify({'ok': True})
 
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ═══════════════════════════════════════════════════════════════
+# IA ENDPOINTS (Clipdrop + Remove.bg) — keys en variables de entorno
+# ═══════════════════════════════════════════════════════════════
+
+@app.route('/api/ia/eliminar-fondo', methods=['POST'])
+def ia_eliminar_fondo():
+    try:
+        import requests as req
+        key = os.environ.get('CLIPDROP_API_KEY')
+        if not key:
+            return jsonify({'error': 'Servicio no disponible'}), 503
+        if 'image_file' not in request.files:
+            return jsonify({'error': 'No se recibió imagen'}), 400
+        f = request.files['image_file']
+        res = req.post(
+            'https://clipdrop-api.co/remove-background/v1',
+            headers={'x-api-key': key},
+            files={'image_file': (f.filename, f.stream, f.content_type)}
+        )
+        if res.status_code == 429:
+            return jsonify({'error': 'Límite diario alcanzado'}), 429
+        if not res.ok:
+            return jsonify({'error': 'Error de IA'}), res.status_code
+        return send_file(io.BytesIO(res.content), mimetype='image/png', download_name='sin-fondo.png')
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/ia/quitar-texto', methods=['POST'])
+def ia_quitar_texto():
+    try:
+        import requests as req
+        key = os.environ.get('CLIPDROP_API_KEY')
+        if not key:
+            return jsonify({'error': 'Servicio no disponible'}), 503
+        if 'image_file' not in request.files:
+            return jsonify({'error': 'No se recibió imagen'}), 400
+        f = request.files['image_file']
+        res = req.post(
+            'https://clipdrop-api.co/remove-text/v1',
+            headers={'x-api-key': key},
+            files={'image_file': (f.filename, f.stream, f.content_type)}
+        )
+        if res.status_code == 429:
+            return jsonify({'error': 'Límite diario alcanzado'}), 429
+        if not res.ok:
+            return jsonify({'error': 'Error de IA'}), res.status_code
+        return send_file(io.BytesIO(res.content), mimetype='image/jpeg', download_name='sin-texto.jpg')
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/ia/upscale', methods=['POST'])
+def ia_upscale():
+    try:
+        import requests as req
+        key = os.environ.get('CLIPDROP_API_KEY')
+        if not key:
+            return jsonify({'error': 'Servicio no disponible'}), 503
+        if 'image_file' not in request.files:
+            return jsonify({'error': 'No se recibió imagen'}), 400
+        f = request.files['image_file']
+        target_w = request.form.get('target_width', '2048')
+        target_h = request.form.get('target_height', '2048')
+        res = req.post(
+            'https://clipdrop-api.co/image-upscaling/v1/upscale',
+            headers={'x-api-key': key},
+            files={'image_file': (f.filename, f.stream, f.content_type)},
+            data={'target_width': target_w, 'target_height': target_h}
+        )
+        if res.status_code == 429:
+            return jsonify({'error': 'Límite diario alcanzado'}), 429
+        if not res.ok:
+            return jsonify({'error': 'Error de IA'}), res.status_code
+        return send_file(io.BytesIO(res.content), mimetype='image/jpeg', download_name='upscale.jpg')
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/ia/reemplazar-fondo', methods=['POST'])
+def ia_reemplazar_fondo():
+    try:
+        import requests as req
+        key = os.environ.get('CLIPDROP_API_KEY')
+        if not key:
+            return jsonify({'error': 'Servicio no disponible'}), 503
+        if 'image_file' not in request.files:
+            return jsonify({'error': 'No se recibió imagen'}), 400
+        f = request.files['image_file']
+        prompt = request.form.get('prompt', 'white background')
+        res = req.post(
+            'https://clipdrop-api.co/replace-background/v1',
+            headers={'x-api-key': key},
+            files={'image_file': (f.filename, f.stream, f.content_type)},
+            data={'prompt': prompt}
+        )
+        if res.status_code == 429:
+            return jsonify({'error': 'Límite diario alcanzado'}), 429
+        if not res.ok:
+            return jsonify({'error': 'Error de IA'}), res.status_code
+        return send_file(io.BytesIO(res.content), mimetype='image/jpeg', download_name='nuevo-fondo.jpg')
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/ia/fondo-blanco', methods=['POST'])
+def ia_fondo_blanco():
+    try:
+        import requests as req
+        key = os.environ.get('REMOVEBG_API_KEY')
+        if not key:
+            return jsonify({'error': 'Servicio no disponible'}), 503
+        if 'image_file' not in request.files:
+            return jsonify({'error': 'No se recibió imagen'}), 400
+        f = request.files['image_file']
+        res = req.post(
+            'https://api.remove.bg/v1.0/removebg',
+            headers={'X-Api-Key': key},
+            files={'image_file': (f.filename, f.stream, f.content_type)},
+            data={'size': 'auto', 'bg_color': 'ffffff'}
+        )
+        if not res.ok:
+            return jsonify({'error': 'Error de IA'}), res.status_code
+        return send_file(io.BytesIO(res.content), mimetype='image/jpeg', download_name='fondo-blanco.jpg')
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
